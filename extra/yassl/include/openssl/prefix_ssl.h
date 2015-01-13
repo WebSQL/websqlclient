@@ -43,6 +43,7 @@
 #define ERR_error_string yaERR_error_string
 #define ERR_remove_state yaERR_remove_state
 #define ERR_get_error yaERR_get_error
+#define ERR_clear_error yaSSL_ERR_clear_error
 #define ERR_peek_error yaERR_peek_error
 #define ERR_GET_REASON yaERR_GET_REASON
 #define SSL_CTX_new yaSSL_CTX_new
@@ -186,3 +187,6 @@
 #define MD5_Update yaMD5_Update
 #define MD5_Final yaMD5_Final
 #define SSL_set_compression yaSSL_set_compression
+
+#define i2d_SSL_SESSION yaSSL_i2d_SSL_SESSION
+#define d2i_SSL_SESSION yaSSL_d2i_SSL_SESSION

@@ -1023,7 +1023,13 @@ char* ERR_error_string(unsigned long errNumber, char* buffer)
 }
 
 
-const char* X509_verify_cert_error_string(long /* error */)
+void ERR_clear_error(void)
+{
+    /* TODO */
+}
+
+
+  const char* X509_verify_cert_error_string(long /* error */)
 {
     // TODO:
     static const char* msg = "Not Implemented";
@@ -1723,5 +1729,16 @@ unsigned long ERR_get_error()
       ssl->useSocket().set_transport_send_function(func);
     }
 
+    int i2d_SSL_SESSION(SSL_SESSION* sess, unsigned char**)
+    {
+      return sizeof(SSL_SESSION);
+    }
+
+    SSL_SESSION* d2i_SSL_SESSION(SSL_SESSION** sess, const unsigned char**, long)
+    {
+        if (sess)
+            return *sess;
+        return NULL;
+    }
 } // extern "C"
 } // namespace

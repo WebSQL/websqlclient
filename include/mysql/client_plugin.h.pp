@@ -11,6 +11,7 @@ typedef struct st_plugin_vio_info
   int socket;
 } MYSQL_PLUGIN_VIO_INFO;
 struct st_mysql;
+typedef struct st_mysql MYSQL;
 typedef struct st_plugin_vio
 {
   int (*read_packet)(struct st_plugin_vio *vio,
@@ -19,7 +20,7 @@ typedef struct st_plugin_vio
                       const unsigned char *packet,
                       int packet_len);
   void (*info)(struct st_plugin_vio *vio, struct st_plugin_vio_info *info);
-  struct st_mysql* mysql;
+  MYSQL* mysql;
   int (*read_packet_nonblocking)(struct st_plugin_vio *vio,
                                  unsigned char **buf,
                                  int *result);

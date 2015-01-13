@@ -55,7 +55,6 @@ enum net_async_block_state_enum
   NET_NONBLOCKING_WRITE = 20150
 };
 typedef enum net_async_block_state_enum net_async_block_state;
-C_MODE_START
 typedef struct {
   uint value_ms_;
 } timeout_t;
@@ -66,7 +65,6 @@ my_bool timeout_is_infinite(const timeout_t t);
 int timeout_is_nonzero(const timeout_t t);
 uint timeout_to_millis(const timeout_t t);
 uint timeout_to_seconds(const timeout_t t);
-C_MODE_END
 struct st_vio;
 typedef struct st_vio Vio;
 typedef struct st_net {
@@ -127,7 +125,8 @@ enum enum_field_types { MYSQL_TYPE_DECIMAL, MYSQL_TYPE_TINY,
    MYSQL_TYPE_DATETIME2,
    MYSQL_TYPE_TIME2,
    MYSQL_TYPE_DOCUMENT,
-                        MYSQL_TYPE_NEWDECIMAL=246,
+   MYSQL_TYPE_DOCUMENT_PATH,
+   MYSQL_TYPE_NEWDECIMAL=246,
    MYSQL_TYPE_ENUM=247,
    MYSQL_TYPE_SET=248,
    MYSQL_TYPE_TINY_BLOB=249,
@@ -362,7 +361,9 @@ enum mysql_option
   MYSQL_OPT_NET_RECEIVE_BUFFER_SIZE,
   MYSQL_OPT_CONNECT_TIMEOUT_MS,
   MYSQL_OPT_READ_TIMEOUT_MS,
-  MYSQL_OPT_WRITE_TIMEOUT_MS
+  MYSQL_OPT_WRITE_TIMEOUT_MS,
+  MYSQL_OPT_SSL_SESSION,
+  MYSQL_OPT_SSL_CONTEXT
 };
 struct st_mysql_options_extention;
 struct st_mysql_options {
@@ -562,6 +563,15 @@ my_bool mysql_ssl_set(MYSQL *mysql, const char *key,
           const char *cert, const char *ca,
           const char *capath, const char *cipher);
 const char * mysql_get_ssl_cipher(MYSQL *mysql);
+void mysql_get_ssl_session(MYSQL *mysql,
+                                              unsigned char* buffer,
+                                              long *buffer_len);
+my_bool mysql_get_ssl_server_cerfificate_info(MYSQL *mysql,
+             char* subject_buf,
+             size_t subject_buflen,
+             char* issuer_buf,
+             size_t issuer_buflen);
+void * mysql_take_ssl_context_ownership(MYSQL *mysql);
 my_bool mysql_change_user(MYSQL *mysql, const char *user,
        const char *passwd, const char *db);
 MYSQL * mysql_real_connect(MYSQL *mysql, const char *host,
@@ -590,9 +600,9 @@ my_bool mysql_real_connect_nonblocking_init(MYSQL *mysql,
 net_async_status mysql_real_connect_nonblocking_run(MYSQL *mysql,
                                                             int *error);
 net_async_status
-mysql_send_query_nonblocking(MYSQL *mysql, const char *query, int *error);
+mysql_send_query_nonblocking(MYSQL* mysql, const char* query, int *error);
 net_async_status
-mysql_real_query_nonblocking(MYSQL *mysql, const char *query,
+mysql_real_query_nonblocking(MYSQL *mysql, const char* query,
                              unsigned long length, int *error);
 net_async_status
 mysql_next_result_nonblocking(MYSQL *mysql, int* error);

@@ -34,8 +34,9 @@
 #include "rsa.h"
 
 
-#define YASSL_VERSION "2.3.4"
+#define YASSL_VERSION "2.3.5"
 
+#define OPENSSL_NO_ECDH
 
 #if defined(__cplusplus)
 extern "C" {
@@ -183,7 +184,7 @@ void          ERR_remove_state(unsigned long);
 unsigned long ERR_get_error(void);
 unsigned long ERR_peek_error(void);
 int           ERR_GET_REASON(int);
-
+void          ERR_clear_error(void);
 
 enum {  /* ERR Constants */
     ERR_TXT_STRING = 1,
@@ -556,6 +557,10 @@ char *yaSSL_ASN1_TIME_to_string(ASN1_TIME *time, char *buf, size_t len);
 void yaSSL_transport_set_ptr(SSL *, void *);
 void yaSSL_transport_set_recv_function(SSL *, yaSSL_recv_func_t);
 void yaSSL_transport_set_send_function(SSL *, yaSSL_send_func_t);
+
+int i2d_SSL_SESSION(SSL_SESSION* sess, unsigned char** p);
+SSL_SESSION* d2i_SSL_SESSION(SSL_SESSION** sess, const unsigned char** p, long i);
+
 
 #if defined(__cplusplus) && !defined(YASSL_MYSQL_COMPATIBLE)
 }      /* namespace  */

@@ -181,7 +181,9 @@ enum mysql_option
   MYSQL_OPT_NET_RECEIVE_BUFFER_SIZE,
   MYSQL_OPT_CONNECT_TIMEOUT_MS,
   MYSQL_OPT_READ_TIMEOUT_MS,
-  MYSQL_OPT_WRITE_TIMEOUT_MS
+  MYSQL_OPT_WRITE_TIMEOUT_MS,
+  MYSQL_OPT_SSL_SESSION,
+  MYSQL_OPT_SSL_CONTEXT
 };
 
 /**
@@ -512,6 +514,26 @@ my_bool		STDCALL mysql_ssl_set(MYSQL *mysql, const char *key,
 				      const char *cert, const char *ca,
 				      const char *capath, const char *cipher);
 const char *    STDCALL mysql_get_ssl_cipher(MYSQL *mysql);
+void            STDCALL mysql_get_ssl_session(MYSQL *mysql,
+                                              unsigned char* buffer,
+                                              long *buffer_len);
+my_bool		STDCALL mysql_get_ssl_server_cerfificate_info(MYSQL *mysql,
+							      char* subject_buf,
+							      size_t subject_buflen,
+							      char* issuer_buf,
+							      size_t issuer_buflen);
+/* Take ownership of the OpenSSL SSL_CTX instance associated with this
+ * connection.  In general, SSL_CTX objects should be re-used.  Either
+ * one can be taken from an existing connection or created by hand (in
+ * which case the mysql SSL options such as MYSQL_OPT_SSL_KEY are
+ * ignored since they influence the SSL_CTX object).  If you are using
+ * yassl, just stop and switch to OpenSSL.
+ *
+ * The caller is responsible for freeing this via SSL_CTX_free.  Note
+ * that this is a void* strictly to avoid including SSL headers in
+ * this file.
+ */
+void *          STDCALL mysql_take_ssl_context_ownership(MYSQL *mysql);
 my_bool		STDCALL mysql_change_user(MYSQL *mysql, const char *user, 
 					  const char *passwd, const char *db);
 MYSQL *		STDCALL mysql_real_connect(MYSQL *mysql, const char *host,
@@ -541,9 +563,9 @@ my_bool		STDCALL mysql_real_connect_nonblocking_init(MYSQL *mysql,
 net_async_status STDCALL mysql_real_connect_nonblocking_run(MYSQL *mysql,
                                                             int *error);
 net_async_status STDCALL
-mysql_send_query_nonblocking(MYSQL *mysql, const char *query, int *error);
+mysql_send_query_nonblocking(MYSQL* mysql, const char* query, int *error);
 net_async_status STDCALL
-mysql_real_query_nonblocking(MYSQL *mysql, const char *query,
+mysql_real_query_nonblocking(MYSQL *mysql, const char* query,
                              unsigned long length, int *error);
 net_async_status STDCALL
 mysql_next_result_nonblocking(MYSQL *mysql, int* error);

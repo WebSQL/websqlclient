@@ -123,13 +123,6 @@ ENDMACRO()
 
 MACRO (FIND_SYSTEM_LIBEDIT name)
   FIND_CURSES()
-  IF (NOT ${name}_INCLUDE_PATH)
-    set(${name}_INCLUDE_PATH /usr/local/Cellar/readline/6.3.6/include)
-  ENDIF()
-  IF (NOT ${name}_LIB_PATHS)
-    set(${name}_LIB_PATHS /usr/local/Cellar/readline/6.3.6/lib)
-  ENDIF()
-
   FIND_PATH(${name}_INCLUDE_DIR readline/readline.h )
   FIND_LIBRARY(${name}_LIBRARY NAMES readline)
   MARK_AS_ADVANCED(${name}_INCLUDE_DIR  ${name}_LIBRARY)
@@ -150,7 +143,7 @@ MACRO (FIND_SYSTEM_LIBEDIT name)
     #include <stdio.h>
     #include <readline/readline.h>
     #if HAVE_READLINE_HISTORY_H
-    #include <readline/histousry.h>
+    #include <readline/history.h>
     #endif
     int main(int argc, char **argv)
     {
@@ -187,13 +180,7 @@ MACRO (FIND_SYSTEM_LIBEDIT name)
       SET(USE_NEW_READLINE_INTERFACE ${${name}_USE_NEW_READLINE_INTERFACE})
       SET(READLINE_FOUND 1)
     ELSE()
-          SET(READLINE_LIBRARY ${${name}_LIBRARY} ${CURSES_LIBRARY})
-          SET(READLINE_INCLUDE_DIR ${${name}_INCLUDE_DIR})
-          SET(HAVE_HIST_ENTRY ${${name}_HAVE_HIST_ENTRY})
-          SET(USE_LIBEDIT_INTERFACE 1)
-          SET(USE_NEW_READLINE_INTERFACE ${${name}_USE_NEW_READLINE_INTERFACE})
-          SET(READLINE_FOUND 1)
-     # MESSAGE(FATAL_ERROR "Cannot use libreadline!")
+      MESSAGE(FATAL_ERROR "Cannot use libreadline!")
     ENDIF()
   ELSE()
     MESSAGE(FATAL_ERROR "Cannot find libreadline!")

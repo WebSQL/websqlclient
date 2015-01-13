@@ -757,7 +757,11 @@ cli_advanced_command(MYSQL *mysql, enum enum_server_command command,
     if (mysql_reconnect(mysql) || stmt_skip)
       DBUG_RETURN(1);
   }
-  vio_set_blocking(net->vio, TRUE);
+  // Set blocking mode except if ssl is involved
+  if (!(mysql->client_flag & CLIENT_SSL))
+  {
+    vio_set_blocking(net->vio, TRUE);
+  }
   if (mysql->status != MYSQL_STATUS_READY ||
       mysql->server_status & SERVER_MORE_RESULTS_EXISTS)
   {
@@ -2054,8 +2058,8 @@ mysql_init(MYSQL *mysql)
   strmov(mysql->net.sqlstate, not_error_sqlstate);
 
   /*
-    Only enable LOAD DATA INFILE by default if configured with
-    --enable-local-infile
+    Only enable LOAD DATA INFILE by default if configured with option
+    ENABLED_LOCAL_INFILE
   */
 
 #if defined(ENABLED_LOCAL_INFILE) && !defined(MYSQL_SERVER)
@@ -2150,10 +2154,12 @@ mysql_ssl_free(MYSQL *mysql __attribute__((unused)))
   {
     my_free(mysql->options.extension->ssl_crl);
     my_free(mysql->options.extension->ssl_crlpath);
+    my_free(mysql->options.extension->ssl_session_data);
+    mysql->options.extension->ssl_context = NULL;
   }
-  if (ssl_fd)
-    SSL_CTX_free(ssl_fd->ssl_context);
-  my_free(mysql->connector_fd);
+  if (ssl_fd) {
+    free_vio_ssl_fd(ssl_fd);
+  }
   mysql->options.ssl_key = 0;
   mysql->options.ssl_cert = 0;
   mysql->options.ssl_ca = 0;
@@ -2163,6 +2169,8 @@ mysql_ssl_free(MYSQL *mysql __attribute__((unused)))
   {
     mysql->options.extension->ssl_crl = 0;
     mysql->options.extension->ssl_crlpath = 0;
+    mysql->options.extension->ssl_session_data = 0;
+    mysql->options.extension->ssl_session_length = 0;
   }
   mysql->options.use_ssl = FALSE;
   mysql->connector_fd = 0;
@@ -2192,6 +2200,77 @@ mysql_get_ssl_cipher(MYSQL *mysql __attribute__((unused)))
   DBUG_RETURN(NULL);
 }
 
+void STDCALL
+mysql_get_ssl_session(MYSQL* mysql __attribute__((unused)),
+                      unsigned char* buffer __attribute__((unused)),
+                      long *buffer_len) {
+  DBUG_ENTER("mysql_get_ssl_session");
+  long available __attribute__((unused)) = *buffer_len;
+  *buffer_len = -1;
+#if defined(HAVE_OPENSSL) && !defined(EMBEDDED_LIBRARY)
+  if (mysql->net.vio && mysql->net.vio->ssl_arg) {
+    SSL_SESSION* sess = SSL_get_session((SSL*)mysql->net.vio->ssl_arg);
+    long len = i2d_SSL_SESSION(sess, NULL);
+    if (len <= 0) {
+      DBUG_PRINT("error", ("unable to serialize SSL session"));
+      *buffer_len = -1;
+      DBUG_VOID_RETURN;
+    }
+    if (len >= available) {
+      *buffer_len = -2;
+      DBUG_PRINT("error", ("insufficient SSL session buffer space"));
+      DBUG_VOID_RETURN;
+    }
+    *buffer_len = i2d_SSL_SESSION(sess, &buffer);
+    DBUG_VOID_RETURN;
+  }
+#endif /* HAVE_OPENSSL && !EMBEDDED_LIBRARY */
+  DBUG_VOID_RETURN;
+}
+
+void* STDCALL
+mysql_take_ssl_context_ownership(MYSQL* mysql __attribute__((unused))) {
+  DBUG_ENTER("mysql_take_ssl_context_ownership");
+#if defined(HAVE_OPENSSL) && !defined(EMBEDDED_LIBRARY)
+  if (mysql->connector_fd) {
+    struct st_VioSSLFd *ssl_fd= (struct st_VioSSLFd*) mysql->connector_fd;
+    ssl_fd->owned = FALSE;
+    DBUG_RETURN(ssl_fd->ssl_context);
+  }
+#endif /* HAVE_OPENSSL && !EMBEDDED_LIBRARY */
+  DBUG_RETURN(NULL);
+}
+
+my_bool STDCALL
+mysql_get_ssl_server_cerfificate_info(MYSQL *mysql __attribute__((unused)),
+                                      char* subject_buf __attribute__((unused)),
+                                      size_t subject_buflen __attribute__((unused)),
+                                      char* issuer_buf __attribute__((unused)),
+                                      size_t issuer_buflen __attribute__((unused)))
+{
+  DBUG_ENTER("mysql_get_ssl_server_cerfificate_info");
+#if defined(HAVE_OPENSSL) && !defined(EMBEDDED_LIBRARY)
+  SSL* ssl = (SSL*)mysql->net.vio->ssl_arg;
+  X509 *cert = NULL;
+
+  subject_buf[0] = '\0';
+  issuer_buf[0] = '\0';
+
+  if (!mysql->net.vio || !ssl)
+    DBUG_RETURN(false);
+
+  cert = SSL_get_peer_certificate(ssl);
+  if (!cert)
+    DBUG_RETURN(false);
+
+  X509_NAME_oneline(X509_get_subject_name(cert), subject_buf, subject_buflen);
+  X509_NAME_oneline(X509_get_issuer_name(cert), issuer_buf, issuer_buflen);
+  X509_free(cert);
+  DBUG_RETURN(true);
+
+#endif /* HAVE_OPENSSL && !EMBEDDED_LIBRARY */
+  DBUG_RETURN(false);
+}
 
 /*
   Compare DNS name against pattern with a wildcard.
@@ -2363,6 +2442,44 @@ static int ssl_verify_server_cert(Vio *vio, const char* server_hostname, const c
           OPENSSL_free(CN_utf8);
           CN_utf8 = 0;
           continue;
+        }
+      }
+      else if (gn_entry->type == GEN_IPADD) {
+        if (!vio || vio->type != VIO_TYPE_SSL) {
+          DBUG_PRINT("error", ("vio null or vio->type unexpectedly non-ssl"));
+          continue;
+        }
+        /* We must call vio_peer_addr to populate vio->remote; this is
+         * a hack to get around the limited vio API. */
+        my_bool peer_rc;
+        char unused_ip[NI_MAXHOST];
+        uint16_t unused_port;
+        peer_rc = vio_peer_addr(vio, unused_ip, &unused_port, NI_MAXHOST);
+        if (peer_rc) {
+          continue;
+        }
+        DBUG_PRINT("info", ("alternative ip address in cert: %s", unused_ip));
+
+        /* Check ipv4 and ipv6 addresses */
+        char* data = (char*)ASN1_STRING_data(gn_entry->d.ia5);
+        int length = ASN1_STRING_length(gn_entry->d.ia5);
+
+        struct sockaddr* sa = (struct sockaddr*)&vio->remote;
+        if (sa->sa_family == AF_INET && length == sizeof(struct in_addr)) {
+          struct sockaddr_in* sa_in = (struct sockaddr_in*)sa;
+          if (memcmp(&sa_in->sin_addr, data, length) == 0) {
+            goto done;
+          }
+        }
+        else if (sa->sa_family == AF_INET6 &&
+                 length == sizeof(struct in6_addr)) {
+          struct sockaddr_in6* sa_in6 = (struct sockaddr_in6*)sa;
+          if (memcmp(&sa_in6->sin6_addr, data, length) == 0) {
+            goto done;
+          }
+        } else {
+          DBUG_PRINT("error", ("unexpected sa_family/length (%d/%d)",
+                               sa->sa_family, length));
         }
       }
     }
@@ -2743,6 +2860,8 @@ typedef struct {
 
 
 /* A state machine for authentication itself. */
+struct st_asm_context;
+typedef struct st_asm_context asm_context;
 
 typedef state_machine_status (*asm_function)(asm_context*);
 
@@ -3047,17 +3166,22 @@ static my_bool prep_client_reply_packet(MCPVIO_EXT *mpvio,
     }
 
     /* Create the VioSSLConnectorFd - init SSL and load certs */
-    if (!(ssl_fd= new_VioSSLConnectorFd(options->ssl_key,
-                                        options->ssl_cert,
-                                        options->ssl_ca,
-                                        options->ssl_capath,
-                                        options->ssl_cipher,
-                                        &ssl_init_error,
-                                        options->extension ? 
-                                        options->extension->ssl_crl : NULL,
-                                        options->extension ? 
-                                        options->extension->ssl_crlpath : NULL)))
-    {
+    if (options->extension && options->extension->ssl_context) {
+      ssl_fd= new_VioSSLConnectorFdFromContext(options->extension->ssl_context,
+                                               &ssl_init_error);
+    } else {
+      ssl_fd= new_VioSSLConnectorFd(options->ssl_key,
+                                    options->ssl_cert,
+                                    options->ssl_ca,
+                                    options->ssl_capath,
+                                    options->ssl_cipher,
+                                    &ssl_init_error,
+                                    options->extension ?
+                                    options->extension->ssl_crl : NULL,
+                                    options->extension ?
+                                    options->extension->ssl_crlpath : NULL);
+    }
+    if (!ssl_fd) {
       set_mysql_extended_error(mysql, CR_SSL_CONNECTION_ERROR, unknown_sqlstate,
                                ER(CR_SSL_CONNECTION_ERROR), sslGetErrString(ssl_init_error));
       goto error;
@@ -3067,7 +3191,10 @@ static my_bool prep_client_reply_packet(MCPVIO_EXT *mpvio,
     /* Connect to the server */
     DBUG_PRINT("info", ("IO layer change in progress..."));
     if (sslconnect(ssl_fd, net->vio,
-                   timeout_to_seconds(mysql->options.connect_timeout), &ssl_error))
+                   timeout_to_seconds(mysql->options.connect_timeout),
+                   options->extension ? options->extension->ssl_session_data : NULL,
+                   options->extension ? options->extension->ssl_session_length : 0,
+                   &ssl_error))
     {    
       char buf[512];
       ERR_error_string_n(ssl_error, buf, 512);
@@ -5731,7 +5858,8 @@ mysql_fetch_row(MYSQL_RES *res) {
   MYSQL *mysql = res->handle;
   MYSQL_ROW row;
   mysql_fetch_row_core(res, &row, FALSE);
-  if (mysql && row == NULL && mysql->net.vio && !vio_is_blocking(mysql->net.vio))
+  if (mysql && row == NULL && mysql->net.vio &&
+      !vio_is_blocking(mysql->net.vio) && !(mysql->client_flag & CLIENT_SSL))
   {
     vio_set_blocking(mysql->net.vio, TRUE);
   }
@@ -5941,6 +6069,10 @@ mysql_options(MYSQL *mysql,enum mysql_option option, const void *arg)
   case MYSQL_OPT_SSL_CRL:      EXTENSION_SET_SSL_STRING(&mysql->options,
                                                         ssl_crl, arg);
                                break;
+  case MYSQL_OPT_SSL_CONTEXT:
+    ENSURE_EXTENSIONS_PRESENT(&mysql->options);
+    mysql->options.extension->ssl_context = (void*)arg;
+    break;
   case MYSQL_OPT_SSL_CRLPATH:  EXTENSION_SET_SSL_STRING(&mysql->options,
                                                         ssl_crlpath, arg);
                                break;
@@ -6101,7 +6233,23 @@ mysql_options4(MYSQL *mysql,enum mysql_option option,
 
       break;
     }
-
+  case MYSQL_OPT_SSL_SESSION:
+    {
+      const char* buf = (const char*)arg1;
+      long buflen = (long)arg2;
+      if (!buf || buflen < 1) {
+        set_mysql_error(mysql, CR_UNKNOWN_ERROR, unknown_sqlstate);
+        DBUG_RETURN(1);
+      }
+      ENSURE_EXTENSIONS_PRESENT(&mysql->options);
+      if (mysql->options.extension->ssl_session_data)
+        my_free(mysql->options.extension->ssl_session_data);
+      mysql->options.extension->ssl_session_data =
+        my_malloc(buflen, MYF(MY_FAE));
+      mysql->options.extension->ssl_session_length = buflen;
+      memcpy(mysql->options.extension->ssl_session_data, buf, buflen);
+    }
+    break;
   default:
     DBUG_RETURN(1);
   }

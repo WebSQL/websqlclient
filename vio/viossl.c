@@ -37,7 +37,9 @@ report_errors(SSL* ssl)
 
   DBUG_ENTER("report_errors");
 
-  while ((l= ERR_get_error_line_data(&file,&line,&data,&flags)))
+  /* Peek at the error queue; don't use get_error so that the error is
+     preserved for our caller. */
+  if ((l= ERR_peek_error_line_data(&file,&line,&data,&flags)))
   {
     DBUG_PRINT("error", ("OpenSSL: %s:%s:%d:%s\n", ERR_error_string(l,buf),
 			 file,line,(flags&ERR_TXT_STRING)?data:"")) ;
@@ -143,20 +145,24 @@ static my_bool ssl_should_retry(Vio *vio, int ret,
     break;
   default:
 #ifndef DBUG_OFF  /* Debug build */
-    /* Note: the OpenSSL error queue gets cleared in report_errors(). */
     report_errors(ssl);
-#else             /* Release build */
-# ifndef HAVE_YASSL
-    /* OpenSSL: clear the error queue. */
-    ERR_clear_error();
-# endif
 #endif
     should_retry= FALSE;
     ssl_set_sys_error(ssl_error);
     break;
   }
 
-  *ssl_errno_holder= ssl_error;
+  /*
+    ERR_get_error() is actually the error we generally want to
+    display if SSL_get_error indicates it is an SSL error (instead
+    of, say, a network issue)
+  */
+  if (ssl_error == SSL_ERROR_SSL) {
+    *ssl_errno_holder= ERR_get_error();
+  } else {
+    *ssl_errno_holder= ssl_error;
+  }
+  ERR_clear_error();
 
   return should_retry;
 }
@@ -173,6 +179,9 @@ size_t vio_ssl_read(Vio *vio, uchar *buf, size_t size)
   while (1)
   {
     enum enum_vio_io_event event;
+
+    // Verify the socket is non blocking.
+    DBUG_ASSERT(!vio_is_blocking(vio));
 
 #ifndef HAVE_YASSL
     /*
@@ -212,6 +221,9 @@ size_t vio_ssl_write(Vio *vio, const uchar *buf, size_t size)
   while (1)
   {
     enum enum_vio_io_event event;
+
+    // Verify the socket is non blocking.
+    DBUG_ASSERT(!vio_is_blocking(vio));
 
 #ifndef HAVE_YASSL
     /*
@@ -371,6 +383,7 @@ static int ssl_handshake_loop(Vio *vio, SSL *ssl,
 
 
 static int ssl_do(struct st_VioSSLFd *ptr, Vio *vio, long timeout,
+                  unsigned char* ssl_session_data, long ssl_session_length,
                   ssl_handshake_func_t func,
                   unsigned long *ssl_errno_holder)
 {
@@ -380,19 +393,51 @@ static int ssl_do(struct st_VioSSLFd *ptr, Vio *vio, long timeout,
   DBUG_ENTER("ssl_do");
   DBUG_PRINT("enter", ("ptr: 0x%lx, sd: %d  ctx: 0x%lx",
                        (long) ptr, sd, (long) ptr->ssl_context));
-
   if (!(ssl= SSL_new(ptr->ssl_context)))
   {
     DBUG_PRINT("error", ("SSL_new failure"));
     *ssl_errno_holder= ERR_get_error();
+    ERR_clear_error();
     DBUG_RETURN(1);
   }
+  if (ssl_session_data && ssl_session_length > 0) {
+    const unsigned char* data_copy = ssl_session_data;
+    SSL_SESSION *sess = d2i_SSL_SESSION(NULL,
+                                        &data_copy,
+                                        ssl_session_length);
+    /* Errors below are non-fatal; simply report them and continue on. */
+    if (!sess) {
+#ifndef DBUG_OFF
+      DBUG_PRINT("error", ("d2i_SSL_SESSION failed"));
+      report_errors(ssl);
+#endif
+      ERR_clear_error();
+    } else {
+      if (!SSL_set_session(ssl, sess)) {
+#ifndef DBUG_OFF
+        DBUG_PRINT("error", ("SSL_set_session failed"));
+        report_errors(ssl);
+#endif
+        ERR_clear_error();
+      } else {
+        DBUG_PRINT("info", ("reused existing session %ld",
+                            (long)sess));
+      }
+      SSL_SESSION_free(sess);
+    }
+  }
+
   DBUG_PRINT("info", ("ssl: 0x%lx timeout: %ld", (long) ssl, timeout));
   SSL_clear(ssl);
   SSL_SESSION_set_timeout(SSL_get_session(ssl), timeout);
   SSL_set_fd(ssl, sd);
 #ifndef HAVE_YASSL
-  SSL_set_options(ssl, SSL_OP_NO_COMPRESSION);
+  SSL_set_options(ssl,
+                  SSL_OP_NO_COMPRESSION |
+                  SSL_OP_NO_SSLv2 |
+                  SSL_OP_NO_SSLv3 |
+                  SSL_OP_SINGLE_DH_USE
+                  );
 #endif
 
   /*
@@ -411,10 +456,15 @@ static int ssl_do(struct st_VioSSLFd *ptr, Vio *vio, long timeout,
 
   if ((r= ssl_handshake_loop(vio, ssl, func, ssl_errno_holder)) < 1)
   {
+#ifndef DBUG_OFF  /* Debug build */
+    report_errors(ssl);
+#endif
     DBUG_PRINT("error", ("SSL_connect/accept failure"));
     SSL_free(ssl);
     DBUG_RETURN(1);
   }
+
+  DBUG_PRINT("info", ("reused session: %ld", SSL_session_reused(ssl)));
 
   /*
     Connection succeeded. Install new function handlers,
@@ -462,15 +512,17 @@ int sslaccept(struct st_VioSSLFd *ptr, Vio *vio, long timeout,
               unsigned long *ssl_errno_holder)
 {
   DBUG_ENTER("sslaccept");
-  DBUG_RETURN(ssl_do(ptr, vio, timeout, SSL_accept, ssl_errno_holder));
+  DBUG_RETURN(ssl_do(ptr, vio, timeout, NULL, 0, SSL_accept, ssl_errno_holder));
 }
 
 
 int sslconnect(struct st_VioSSLFd *ptr, Vio *vio, long timeout,
+               unsigned char* ssl_session_data, long ssl_session_length,
                unsigned long *ssl_errno_holder)
 {
   DBUG_ENTER("sslconnect");
-  DBUG_RETURN(ssl_do(ptr, vio, timeout, SSL_connect, ssl_errno_holder));
+  DBUG_RETURN(ssl_do(ptr, vio, timeout, ssl_session_data, ssl_session_length,
+                     SSL_connect, ssl_errno_holder));
 }
 
 

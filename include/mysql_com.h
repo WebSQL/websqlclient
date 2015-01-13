@@ -366,7 +366,9 @@ typedef enum net_async_block_state_enum net_async_block_state;
 
 #define ONLY_KILL_QUERY         1
 
-C_MODE_START
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /*
   In order to avoid confusion about whether a timeout value is in
@@ -388,7 +390,9 @@ uint timeout_to_millis(const timeout_t t);
 // toSeconds rounds down.
 uint timeout_to_seconds(const timeout_t t);
 
-C_MODE_END
+#ifdef __cplusplus
+}
+#endif
 
 struct st_vio;					/* Only C */
 typedef struct st_vio Vio;
@@ -516,7 +520,8 @@ enum enum_field_types { MYSQL_TYPE_DECIMAL, MYSQL_TYPE_TINY,
 			MYSQL_TYPE_DATETIME2,
 			MYSQL_TYPE_TIME2,
 			MYSQL_TYPE_DOCUMENT,
-                        MYSQL_TYPE_NEWDECIMAL=246,
+			MYSQL_TYPE_DOCUMENT_PATH,
+      MYSQL_TYPE_NEWDECIMAL=246,
 			MYSQL_TYPE_ENUM=247,
 			MYSQL_TYPE_SET=248,
 			MYSQL_TYPE_TINY_BLOB=249,
