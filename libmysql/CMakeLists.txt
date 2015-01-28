@@ -186,6 +186,10 @@ ENDIF()
 MERGE_LIBRARIES(websqlclient STATIC ${STATIC_MERGE_LIBS} COMPONENT Development)
 TARGET_LINK_LIBRARIES(websqlclient ${ZLIB_LIBRARY} ${SSL_LIBRARIES})
 
+IF(DISABLE_SHARED)
+  FILE(WRITE ${CMAKE_CURRENT_BINARY_DIR}/libraries.txt "${ZLIB_LIBRARY};${SSL_LIBRARIES};${LIBRT}")
+ENDIF()
+
 # Visual Studio users need debug  static library for debug projects
 IF(MSVC)
  INSTALL_DEBUG_TARGET(websqlclient DESTINATION ${INSTALL_LIBDIR}/debug)
