@@ -607,7 +607,7 @@ mysql_real_query_nonblocking(MYSQL *mysql, const char* query,
 net_async_status
 mysql_next_result_nonblocking(MYSQL *mysql, int* error);
 net_async_status
-mysql_select_db_nonblocking(MYSQL *mysql, const char *db, my_bool* error);
+mysql_select_db_nonblocking(MYSQL *mysql, const char *db, int *error);
 int
 mysql_get_file_descriptor(MYSQL *mysql);
 void mysql_get_character_set_info(MYSQL *mysql,

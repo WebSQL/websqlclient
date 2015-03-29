@@ -5253,17 +5253,20 @@ mysql_select_db(MYSQL *mysql, const char *db)
 
 
 net_async_status STDCALL
-mysql_select_db_nonblocking(MYSQL *mysql, const char *db, my_bool* error)
+mysql_select_db_nonblocking(MYSQL *mysql, const char *db, int* error)
 {
+  bool error_bool;
   if (simple_command_nonblocking(mysql, COM_INIT_DB, (const uchar*) db,
-                                 (ulong) strlen(db), 0, error))
-    return 1;
-  if (*error) {
-    return 0;
+                               (ulong) strlen(db), 1, &error_bool) == NET_ASYNC_NOT_READY) {
+    return NET_ASYNC_NOT_READY;
   }
-  my_free(mysql->db);
-  mysql->db=my_strdup(db,MYF(MY_WME));
-  return 0;
+
+  if (!error_bool) {
+    my_free(mysql->db);
+    mysql->db=my_strdup(db,MYF(MY_WME));
+  }
+  *error = error_bool;
+  return NET_ASYNC_COMPLETE;
 }
 
 

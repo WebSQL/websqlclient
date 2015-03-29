@@ -571,7 +571,7 @@ net_async_status STDCALL
 mysql_next_result_nonblocking(MYSQL *mysql, int* error);
 
 net_async_status STDCALL
-mysql_select_db_nonblocking(MYSQL *mysql, const char *db, my_bool* error);
+mysql_select_db_nonblocking(MYSQL *mysql, const char *db, int *error);
 
 int STDCALL
 mysql_get_file_descriptor(MYSQL *mysql);
